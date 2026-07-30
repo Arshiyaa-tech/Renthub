@@ -1,0 +1,417 @@
+// ============================================================
+// RentHub Database Schema — Prisma ORM
+// ============================================================
+// After updating: npx prisma migrate dev --name add_payment_model
+// Then: npx prisma generate
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// Enums
+// ============================================================
+
+enum Role {
+  OWNER
+  RENTER
+}
+
+enum Condition {
+  NEW
+  LIKE_NEW
+  GOOD
+  FAIR
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
+  CANCELLED
+  ACTIVE
+  COMPLETED
+}
+
+enum PaymentStatus {
+  PENDING
+  AUTHORIZED
+  CAPTURED
+  REFUNDED
+  FAILED
+  CANCELLED
+}
+
+// ============================================================
+// User Model
+// ============================================================
+
+model User {
+  id           String    @id @default(uuid())
+  fullName     String
+  email        String    @unique
+  password     String
+  phone        String?
+  profileImage String?
+  role         Role      @default(RENTER)
+  bio          String?
+  location     String?
+  isVerified   Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  listings        Listing[]
+  renterBookings  Booking[] @relation("RenterBookings")
+  ownerBookings   Booking[] @relation("OwnerBookings")
+  renterPayments  Payment[] @relation("RenterPayments")
+  ownerPayments   Payment[] @relation("OwnerPayments")
+  writtenReviews  Review[]  @relation("WrittenReviews")
+  receivedReviews Review[]  @relation("ReceivedReviews")
+  raisedDisputes   Dispute[] @relation("RaisedDisputes")
+  againstDisputes  Dispute[] @relation("AgainstDisputes")
+  notifications    Notification[]
+  notificationPreference NotificationPreference?
+  wishlistItems    Wishlist[]
+  identityVerifications IdentityVerification[]
+
+  @@map("users")
+}
+
+// ============================================================
+// Listing Model
+// ============================================================
+
+model Listing {
+  id              String     @id @default(uuid())
+  title           String
+  description     String
+  category        String
+  condition       Condition  @default(GOOD)
+  dailyRate       Float
+  securityDeposit Float      @default(0)
+  location        String
+  imageUrls       String[]
+  isAvailable     Boolean    @default(true)
+  ownerId         String
+  owner           User       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  bookings      Booking[]
+  payments      Payment[]
+  reviews        Review[]
+  disputes      Dispute[]
+  wishlistedBy  Wishlist[]
+
+  @@index([ownerId])
+  @@index([category])
+  @@index([isAvailable])
+  @@map("listings")
+}
+
+// ============================================================
+// Booking Model
+// ============================================================
+
+model Booking {
+  id               String        @id @default(uuid())
+  listingId        String
+  listing          Listing       @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  renterId         String
+  renter           User          @relation("RenterBookings", fields: [renterId], references: [id])
+  ownerId          String
+  owner            User          @relation("OwnerBookings", fields: [ownerId], references: [id])
+  startDate        DateTime
+  endDate          DateTime
+  numberOfDays     Int
+  dailyRate        Float
+  subtotal         Float
+  platformFee      Float
+  serviceFee       Float
+  securityDeposit  Float
+  totalAmount      Float
+  status           BookingStatus @default(PENDING)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  payment Payment?
+  insurance InsurancePolicy?
+  reviews  Review[]
+  disputes  Dispute[]
+
+  @@index([listingId])
+  @@index([renterId])
+  @@index([ownerId])
+  @@index([status])
+  @@index([startDate, endDate])
+  @@index([createdAt])
+  @@map("bookings")
+}
+
+// ============================================================
+// Payment Model
+// ============================================================
+
+model Payment {
+  id               String        @id @default(uuid())
+  bookingId        String        @unique
+  booking          Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  listingId        String
+  listing          Listing       @relation(fields: [listingId], references: [id])
+  renterId         String
+  renter           User          @relation("RenterPayments", fields: [renterId], references: [id])
+  ownerId          String
+  owner            User          @relation("OwnerPayments", fields: [ownerId], references: [id])
+
+  // Stripe fields
+  paymentIntentId  String?
+  chargeId         String?
+
+  // Monetary fields
+  amount           Float         // Total amount authorized/captured
+  currency         String        @default("usd")
+  securityDeposit  Float         @default(0)
+  platformFee      Float         @default(0)
+  serviceFee       Float         @default(0)
+
+  // Payment details
+  paymentMethod    String?
+  status           PaymentStatus @default(PENDING)
+
+  // Timestamps
+  capturedAt       DateTime?
+  refundedAt       DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  @@index([bookingId])
+  @@index([renterId])
+  @@index([ownerId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("payments")
+}
+
+// ============================================================
+// Dispute Status Enum
+// ============================================================
+
+enum DisputeStatus {
+  OPEN
+  UNDER_REVIEW
+  MORE_INFORMATION_REQUIRED
+  APPROVED
+  REJECTED
+  RESOLVED
+}
+
+// ============================================================
+// Review Model
+// ============================================================
+
+model Review {
+  id          String   @id @default(uuid())
+  bookingId   String
+  booking     Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  listingId   String
+  listing     Listing  @relation(fields: [listingId], references: [id])
+  reviewerId  String
+  reviewer    User     @relation("WrittenReviews", fields: [reviewerId], references: [id])
+  revieweeId  String
+  reviewee    User     @relation("ReceivedReviews", fields: [revieweeId], references: [id])
+  rating      Int      // 1-5
+  title       String
+  comment     String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([bookingId, reviewerId])
+  @@index([listingId])
+  @@index([reviewerId])
+  @@index([revieweeId])
+  @@map("reviews")
+}
+
+// ============================================================
+// Notification Enums
+// ============================================================
+
+enum NotificationType {
+  BOOKING_REQUEST
+  BOOKING_CONFIRMED
+  BOOKING_REJECTED
+  BOOKING_CANCELLED
+  BOOKING_COMPLETED
+  PAYMENT_AUTHORIZED
+  PAYMENT_CAPTURED
+  PAYMENT_REFUNDED
+  REVIEW_RECEIVED
+  DISPUTE_CREATED
+  DISPUTE_UPDATED
+  LISTING_APPROVED
+  LISTING_DISABLED
+  SYSTEM
+}
+
+enum VerificationStatus {
+  PENDING
+  PROCESSING
+  VERIFIED
+  FAILED
+  EXPIRED
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  SMS
+}
+
+// ============================================================
+// Notification Model
+// ============================================================
+
+model Notification {
+  id            String             @id @default(uuid())
+  userId        String
+  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title         String
+  message       String
+  type          NotificationType
+  channels      NotificationChannel[]
+  referenceType String?            // e.g., 'booking', 'payment', 'review', 'dispute'
+  referenceId   String?            // ID of the referenced entity
+  isRead        Boolean            @default(false)
+  emailSent     Boolean            @default(false)
+  smsSent       Boolean            @default(false)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  @@index([userId])
+  @@index([userId, isRead])
+  @@index([type])
+  @@index([createdAt])
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+// ============================================================
+// Identity Verification Model
+// ============================================================
+
+model IdentityVerification {
+  id                      String             @id @default(uuid())
+  userId                  String
+  user                    User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  verificationSessionId   String             @unique
+  verificationReportId    String?
+  status                  VerificationStatus @default(PENDING)
+  verifiedAt              DateTime?
+  documentType            String?
+  country                 String?
+  createdAt               DateTime           @default(now())
+  updatedAt               DateTime           @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@map("identity_verifications")
+}
+
+// ============================================================
+// Notification Preference Model
+// ============================================================
+
+model NotificationPreference {
+  id                    String  @id @default(uuid())
+  userId                String  @unique
+  user                  User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emailEnabled          Boolean @default(true)
+  smsEnabled            Boolean @default(false)
+  inAppEnabled          Boolean @default(true)
+  bookingNotifications  Boolean @default(true)
+  paymentNotifications  Boolean @default(true)
+  reviewNotifications   Boolean @default(true)
+  marketingEmails       Boolean @default(false)
+
+  @@map("notification_preferences")
+}
+
+// ============================================================
+// Wishlist Model
+// ============================================================
+
+model Wishlist {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  listingId String
+  listing   Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, listingId])
+  @@index([userId])
+  @@index([listingId])
+  @@map("wishlists")
+}
+
+// ============================================================
+// Insurance / Damage Protection Model
+// ============================================================
+
+model InsurancePolicy {
+  id             String   @id @default(uuid())
+  bookingId      String   @unique
+  booking        Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  provider       String   @default("RentHubProtect")
+  planName       String   @default("Standard Damage Protection")
+  premium        Float    // Amount charged to user
+  coverageAmount Float    // Maximum coverage amount
+  status         String   @default("ACTIVE")
+  policyNumber   String   @unique
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([bookingId])
+  @@map("insurance_policies")
+}
+
+// ============================================================
+// Dispute Model
+// ============================================================
+
+model Dispute {
+  id              String        @id @default(uuid())
+  bookingId       String
+  booking         Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  listingId       String
+  listing         Listing       @relation(fields: [listingId], references: [id])
+  raisedById      String
+  raisedBy        User          @relation("RaisedDisputes", fields: [raisedById], references: [id])
+  againstUserId   String
+  againstUser     User          @relation("AgainstDisputes", fields: [againstUserId], references: [id])
+  reason          String        // One of the predefined dispute reasons
+  description     String        // Minimum 30 characters
+  evidenceImages  String[]      // Array of image URLs (max 10)
+  status          DisputeStatus @default(OPEN)
+  adminNotes      String?
+  resolution      String?
+  damageAmount    Float?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@unique([bookingId, raisedById])  // Max one dispute per booking per user
+  @@index([bookingId])
+  @@index([listingId])
+  @@index([raisedById])
+  @@index([againstUserId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("disputes")
+}
